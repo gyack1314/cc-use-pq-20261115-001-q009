@@ -10,6 +10,7 @@ class Editions:
     def __init__(self, database, engine):
         self.database = database
         self.engine = engine
+        self.jobs = None  # 由 application 在装配后注入，用于与异步作业互斥
 
     def create(self, request_key, request):
         identifier(request_key, "request_key")
@@ -21,6 +22,8 @@ class Editions:
                 if existing["request_digest"] != digest:
                     raise conflict("分析请求号已用于不同请求")
                 return self.decode(existing, include_result=False)
+            if self.jobs is not None:
+                self.jobs.require_no_active(request_key, connection)
             result = self.engine.run(normalized, connection)
             identity = "ed-" + uuid.uuid4().hex
             result_digest = fingerprint(result)

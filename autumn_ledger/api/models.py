@@ -60,6 +60,16 @@ class EditionRequest(StrictModel):
     request: AnalysisRequest
 
 
+class JobSubmission(StrictModel):
+    request_key: StrictStr
+    request: AnalysisRequest
+    actor: StrictStr = "operator"
+
+
+class JobAction(StrictModel):
+    actor: StrictStr = "operator"
+
+
 class DecisionRequest(StrictModel):
     action: Literal["approve", "reject", "reopen"]
     expected_version: StrictInt

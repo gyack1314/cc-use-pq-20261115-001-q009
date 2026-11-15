@@ -1,4 +1,4 @@
-from ..errors import require
+from ..errors import LedgerError, require
 from ..values import fingerprint, utc_now
 from .comparison import comparable_coverage, compare_periods
 from .cubes import build_cubes
@@ -9,6 +9,18 @@ from .trends import daily_trends, weekday_seasonality
 from .diagnostics import diagnostics
 from .calendar_view import calendar_analysis
 from .invariants import inspect_result
+
+
+def analysis_plan(request):
+    steps = [{"key": "references",
+              "scope": {"kind": "references", "cities": request["cities"], "sources": request["sources"]}}]
+    for name, window in request_windows(request).items():
+        steps.append({"key": f"period:{name}",
+                      "scope": {"kind": "period", "period": name, "start": window.start, "end": window.end}})
+    if "baseline_start" in request:
+        steps.append({"key": "comparison", "scope": {"kind": "comparison", "periods": ["current", "baseline"]}})
+    steps.append({"key": "result", "scope": {"kind": "assembly"}})
+    return steps
 
 
 class AnalysisEngine:
@@ -25,40 +37,66 @@ class AnalysisEngine:
             with self.database.transaction() as opened:
                 return self.run(request, opened)
         revision = self.database.snapshot_revision(connection, request.get("revision"))
-        references = self.validate_references(request, revision, connection)
-        heads = self.intake.heads(revision, request["sources"], connection)
+        references = self.step_references(request, revision, connection)
         windows = request_windows(request)
         periods = {}
         lineage = []
         for name, window in windows.items():
-            selected = [order for order in heads if match_order(order, request, window)]
-            exposure = self.calendars.exposure(request["cities"], window.start, window.end, revision, connection)
-            grid = daily_grid(window, request["cities"], exposure)
-            matrix = self.coverage.matrix(request["sources"], request["cities"],
-                                          window.start, window.end, revision, connection)
-            cube = build_cubes(selected, window, request["cities"], grid)
-            periods[name] = {"window": window.as_dict(), "orders": selected, "exposure": grid,
-                             "exposure_summary": exposure_summary(grid), "coverage": matrix,
-                             "coverage_summary": self.coverage.summary(matrix),
-                             "coverage_gaps": self.coverage.missing_groups(matrix), "cube": cube}
-            period = periods[name]
-            period["profiles"] = {dimension: profile_period(period, references, dimension)
-                                  for dimension in ("origin", "destination", "source")}
-            period["route_association"] = cross_shares(selected, "origin", "destination")
-            period["daily_trends"] = daily_trends(period)
-            period["weekday_seasonality"] = weekday_seasonality(period)
-            period["diagnostics"] = diagnostics(period)
-            period["calendar_analysis"] = calendar_analysis(period, references)
-            for order in selected:
-                lineage.append({"period": name, "source": order["source"], "order_id": order["order_id"],
-                                "event_id": order["event_id"], "sequence": order["sequence"],
-                                "revision": order["ingested_revision"], "digest": fingerprint(order)})
-        comparison = None
-        if "baseline" in periods:
-            pairs = comparable_coverage(periods["current"]["coverage"], periods["baseline"]["coverage"],
-                                        request["sources"], request["cities"])
-            comparison = compare_periods(periods["current"]["cube"], periods["baseline"]["cube"],
-                                         windows["current"], windows["baseline"], pairs)
+            period, entries = self.step_period(request, revision, name, window, references, connection)
+            periods[name] = period
+            lineage.extend(entries)
+        comparison = self.step_comparison(request, windows, periods)
+        return self.assemble(request, revision, references, periods, lineage, comparison)
+
+    def execute_step(self, key, request, revision, context, connection):
+        if key == "references":
+            return self.step_references(request, revision, connection)
+        if key.startswith("period:"):
+            name = key.split(":", 1)[1]
+            window = request_windows(request)[name]
+            period, entries = self.step_period(request, revision, name, window, context["references"], connection)
+            return {"period": period, "lineage": entries}
+        if key == "comparison":
+            return self.step_comparison(request, request_windows(request), context["periods"])
+        raise LedgerError("unknown_step", f"未知分析步骤：{key}", 500)
+
+    def step_references(self, request, revision, connection):
+        return self.validate_references(request, revision, connection)
+
+    def step_period(self, request, revision, name, window, references, connection):
+        heads = self.intake.heads(revision, request["sources"], connection)
+        selected = [order for order in heads if match_order(order, request, window)]
+        exposure = self.calendars.exposure(request["cities"], window.start, window.end, revision, connection)
+        grid = daily_grid(window, request["cities"], exposure)
+        matrix = self.coverage.matrix(request["sources"], request["cities"],
+                                      window.start, window.end, revision, connection)
+        cube = build_cubes(selected, window, request["cities"], grid)
+        period = {"window": window.as_dict(), "orders": selected, "exposure": grid,
+                  "exposure_summary": exposure_summary(grid), "coverage": matrix,
+                  "coverage_summary": self.coverage.summary(matrix),
+                  "coverage_gaps": self.coverage.missing_groups(matrix), "cube": cube}
+        period["profiles"] = {dimension: profile_period(period, references, dimension)
+                              for dimension in ("origin", "destination", "source")}
+        period["route_association"] = cross_shares(selected, "origin", "destination")
+        period["daily_trends"] = daily_trends(period)
+        period["weekday_seasonality"] = weekday_seasonality(period)
+        period["diagnostics"] = diagnostics(period)
+        period["calendar_analysis"] = calendar_analysis(period, references)
+        entries = [{"period": name, "source": order["source"], "order_id": order["order_id"],
+                    "event_id": order["event_id"], "sequence": order["sequence"],
+                    "revision": order["ingested_revision"], "digest": fingerprint(order)}
+                   for order in selected]
+        return period, entries
+
+    def step_comparison(self, request, windows, periods):
+        if "baseline" not in periods:
+            return None
+        pairs = comparable_coverage(periods["current"]["coverage"], periods["baseline"]["coverage"],
+                                    request["sources"], request["cities"])
+        return compare_periods(periods["current"]["cube"], periods["baseline"]["cube"],
+                               windows["current"], windows["baseline"], pairs)
+
+    def assemble(self, request, revision, references, periods, lineage, comparison):
         quality = quality_report(periods, request, comparison)
         result = {"format_version": 1, "data_revision": revision, "request": request,
                   "references": references, "periods": periods, "comparison": comparison,

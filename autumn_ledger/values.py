@@ -19,6 +19,10 @@ def utc_now():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
+def utc_after(seconds):
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat(timespec="microseconds")
+
+
 def identifier(value, field="id"):
     require(isinstance(value, str), "invalid_id", f"{field}必须是字符串")
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}", value) is not None,

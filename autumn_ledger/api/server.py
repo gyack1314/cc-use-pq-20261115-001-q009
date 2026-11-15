@@ -9,7 +9,7 @@ from ..analysis.narrative import explain_result
 from ..analysis.trends import robust_flags
 from .models import (CatalogWrite, CalendarWrite, CoverageWrite, EventBatch, FileBatch, FileInspect,
                      AnalysisRequest, EditionRequest, DecisionRequest, PublishRequest, RetireRequest,
-                     EditionComparison, ProfileRequest, AnomalyRequest)
+                     EditionComparison, ProfileRequest, AnomalyRequest, JobSubmission, JobAction)
 
 
 def request_value(value):
@@ -115,6 +115,30 @@ def create_app(path=None):
     @app.post("/editions")
     def create_edition(body: EditionRequest):
         return ledger.editions.create(body.request_key, request_value(body.request))
+
+    @app.post("/analysis-jobs")
+    def submit_job(body: JobSubmission):
+        return ledger.jobs.submit(body.request_key, request_value(body.request), body.actor)
+
+    @app.get("/analysis-jobs")
+    def list_jobs(state: str | None = None, limit: int = 100, offset: int = 0):
+        return ledger.jobs.list(state, limit, offset)
+
+    @app.get("/analysis-jobs/{identity}")
+    def get_job(identity: str):
+        return ledger.jobs.get(identity)
+
+    @app.get("/analysis-jobs/{identity}/events")
+    def job_events(identity: str, limit: int = 100, offset: int = 0):
+        return ledger.jobs.events(identity, limit, offset)
+
+    @app.post("/analysis-jobs/{identity}/cancel")
+    def cancel_job(identity: str, body: JobAction):
+        return ledger.jobs.cancel(identity, body.actor)
+
+    @app.post("/analysis-jobs/{identity}/retry")
+    def retry_job(identity: str, body: JobAction):
+        return ledger.jobs.retry(identity, body.actor)
 
     @app.get("/editions")
     def list_editions(state: str | None = None, limit: int = 100, offset: int = 0):

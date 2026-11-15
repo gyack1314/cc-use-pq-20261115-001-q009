@@ -80,8 +80,21 @@ def run_demo():
             assert client.post(f"/editions/{identity}/verify").json()["ok"]
             replacement = client.post("/editions", json={"request_key": "demo-2", "request": request_data()}).json()
             assert replacement["summary"]["net_cents"] == 110000
+            submitted = client.post("/analysis-jobs", json={"request_key": "demo-job", "request": request_data()})
+            assert submitted.status_code == 200, submitted.text
+            job = submitted.json()
+            assert job["state"] == "queued" and job["progress"] == {"completed": 0, "total": 5}
+            assert ledger.jobs.work("demo-worker") == 1
+            job = client.get(f"/analysis-jobs/{job['id']}").json()
+            assert job["state"] == "succeeded"
+            assert job["progress"]["completed"] == job["progress"]["total"]
+            job_edition = client.get(f"/editions/{job['edition_id']}").json()
+            assert job_edition["result"]["periods"]["current"]["cube"]["totals"]["net_cents"] == 110000
+            assert client.post(f"/editions/{job['edition_id']}/verify").json()["ok"]
             assert ledger.database.integrity()["ok"]
             return {"ok": True, "orders": 3, "original_net_cents": 120000, "corrected_net_cents": 110000,
                     "stale_publish_blocked": True, "old_snapshot_reproduced": True,
                     "bundle_verified": True, "revision_before_correction": revision,
+                    "job_net_cents": job_edition["result"]["periods"]["current"]["cube"]["totals"]["net_cents"],
+                    "job_steps": job["progress"]["total"],
                     "final_revision": ledger.database.revision()}

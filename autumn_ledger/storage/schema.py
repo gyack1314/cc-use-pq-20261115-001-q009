@@ -19,6 +19,11 @@ STATEMENTS = (
     "CREATE TABLE IF NOT EXISTS decisions (id INTEGER PRIMARY KEY AUTOINCREMENT, edition_id TEXT NOT NULL REFERENCES editions(id), edition_version INTEGER NOT NULL, action TEXT NOT NULL, actor TEXT NOT NULL, note TEXT NOT NULL, created_at TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS channels (name TEXT PRIMARY KEY, edition_id TEXT NOT NULL REFERENCES editions(id), generation INTEGER NOT NULL)",
     "CREATE TABLE IF NOT EXISTS publication_history (id INTEGER PRIMARY KEY AUTOINCREMENT, channel TEXT NOT NULL, generation INTEGER NOT NULL, edition_id TEXT NOT NULL REFERENCES editions(id), actor TEXT NOT NULL, created_at TEXT NOT NULL, UNIQUE(channel,generation))",
+    "CREATE TABLE IF NOT EXISTS analysis_jobs (id TEXT PRIMARY KEY, request_key TEXT NOT NULL UNIQUE, request_digest TEXT NOT NULL, name TEXT NOT NULL, data_revision INTEGER NOT NULL, request TEXT NOT NULL, plan TEXT NOT NULL, plan_digest TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')), epoch INTEGER NOT NULL, attempts INTEGER NOT NULL, owner TEXT, lease_expires_at TEXT, edition_id TEXT REFERENCES editions(id), result_digest TEXT, error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT)",
+    "CREATE INDEX IF NOT EXISTS analysis_jobs_state ON analysis_jobs(state,created_at)",
+    "CREATE TABLE IF NOT EXISTS analysis_job_steps (job_id TEXT NOT NULL REFERENCES analysis_jobs(id), step TEXT NOT NULL, epoch INTEGER NOT NULL, plan_digest TEXT NOT NULL, scope TEXT NOT NULL, payload TEXT NOT NULL, completed_at TEXT NOT NULL, PRIMARY KEY(job_id,step))",
+    "CREATE TABLE IF NOT EXISTS analysis_job_events (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL REFERENCES analysis_jobs(id), epoch INTEGER NOT NULL, event TEXT NOT NULL, actor TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL)",
+    "CREATE INDEX IF NOT EXISTS analysis_job_events_job ON analysis_job_events(job_id,id)",
 )
 
 
